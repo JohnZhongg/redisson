@@ -20,7 +20,6 @@ import org.hibernate.boot.spi.SessionFactoryOptions;
 import org.hibernate.cache.CacheException;
 import org.hibernate.cache.cfg.spi.DomainDataRegionBuildingContext;
 import org.hibernate.cache.cfg.spi.DomainDataRegionConfig;
-import org.hibernate.cache.internal.DefaultCacheKeysFactory;
 import org.hibernate.cache.spi.CacheKeysFactory;
 import org.hibernate.cache.spi.DomainDataRegion;
 import org.hibernate.cache.spi.access.AccessType;
@@ -79,16 +78,20 @@ public class RedissonRegionFactory extends RegionFactoryTemplate {
 
     private RedissonClient redisson;
     private CacheKeysFactory cacheKeysFactory;
-    private boolean fallback;
-    
+    protected boolean fallback;
+
+    @Override
+    protected CacheKeysFactory getImplicitCacheKeysFactory() {
+        return cacheKeysFactory;
+    }
+
     @Override
     protected void prepareForUse(SessionFactoryOptions settings, @SuppressWarnings("rawtypes") Map properties) throws CacheException {
         this.redisson = createRedissonClient(properties);
         
         StrategySelector selector = settings.getServiceRegistry().getService(StrategySelector.class);
         cacheKeysFactory = selector.resolveDefaultableStrategy(CacheKeysFactory.class, 
-                properties.get(Environment.CACHE_KEYS_FACTORY), DefaultCacheKeysFactory.INSTANCE);
-
+                properties.get(Environment.CACHE_KEYS_FACTORY), new RedissonCacheKeysFactory(redisson.getConfig().getCodec()));
     }
 
     protected RedissonClient createRedissonClient(Map properties) {
@@ -112,7 +115,6 @@ public class RedissonRegionFactory extends RegionFactoryTemplate {
 
         String fallbackValue = (String) properties.getOrDefault(FALLBACK, "false");
         fallback = Boolean.valueOf(fallbackValue);
-        
         return Redisson.create(config);
     }
     
@@ -192,11 +194,11 @@ public class RedissonRegionFactory extends RegionFactoryTemplate {
                 regionConfig,
                 this,
                 createDomainDataStorageAccess( regionConfig, buildingContext ),
-                cacheKeysFactory,
+                getImplicitCacheKeysFactory(),
                 buildingContext
         );
     }
-    
+
     @Override
     protected DomainDataStorageAccess createDomainDataStorageAccess(DomainDataRegionConfig regionConfig,
             DomainDataRegionBuildingContext buildingContext) {
@@ -212,21 +214,21 @@ public class RedissonRegionFactory extends RegionFactoryTemplate {
         }
         
         RMapCache<Object, Object> mapCache = getCache(regionConfig.getRegionName(), buildingContext.getSessionFactory().getProperties(), defaultKey);
-        return new RedissonStorage(mapCache, buildingContext.getSessionFactory().getProperties(), defaultKey);
+        return new RedissonStorage(mapCache, ((Redisson)redisson).getConnectionManager(), buildingContext.getSessionFactory().getProperties(), defaultKey);
     }
     
     @Override
     protected StorageAccess createQueryResultsRegionStorageAccess(String regionName,
             SessionFactoryImplementor sessionFactory) {
         RMapCache<Object, Object> mapCache = getCache(regionName, sessionFactory.getProperties(), QUERY_DEF);
-        return new RedissonStorage(mapCache, sessionFactory.getProperties(), QUERY_DEF);
+        return new RedissonStorage(mapCache, ((Redisson)redisson).getConnectionManager(), sessionFactory.getProperties(), QUERY_DEF);
     }
 
     @Override
     protected StorageAccess createTimestampsRegionStorageAccess(String regionName,
             SessionFactoryImplementor sessionFactory) {
         RMapCache<Object, Object> mapCache = getCache(regionName, sessionFactory.getProperties(), TIMESTAMPS_DEF);
-        return new RedissonStorage(mapCache, sessionFactory.getProperties(), TIMESTAMPS_DEF);
+        return new RedissonStorage(mapCache, ((Redisson)redisson).getConnectionManager(), sessionFactory.getProperties(), TIMESTAMPS_DEF);
     }
 
     protected RMapCache<Object, Object> getCache(String regionName, Map properties, String defaultKey) {

@@ -16,6 +16,7 @@
 package org.redisson.codec;
 
 import java.io.IOException;
+import java.util.Locale;
 
 import org.jboss.marshalling.ByteInput;
 import org.jboss.marshalling.ByteOutput;
@@ -171,10 +172,13 @@ public class MarshallingCodec extends BaseCodec {
             ByteBuf out = ByteBufAllocator.DEFAULT.buffer();
 
             Marshaller marshaller = encoderThreadLocal.get();
-            marshaller.start(new ByteOutputWrapper(out));
-            marshaller.writeObject(in);
-            marshaller.finish();
-            marshaller.close();
+            try {
+                marshaller.start(new ByteOutputWrapper(out));
+                marshaller.writeObject(in);
+            } finally {
+                marshaller.finish();
+                marshaller.close();
+            }
             return out;
         }
     };
@@ -208,7 +212,7 @@ public class MarshallingCodec extends BaseCodec {
     }
     
     public MarshallingCodec(Protocol protocol, MarshallingConfiguration configuration) {
-        this.factory = Marshalling.getProvidedMarshallerFactory(protocol.toString().toLowerCase());
+        this.factory = Marshalling.getProvidedMarshallerFactory(protocol.toString().toLowerCase(Locale.ENGLISH));
         if (factory == null) {
             throw new IllegalArgumentException(protocol.toString());
         }
