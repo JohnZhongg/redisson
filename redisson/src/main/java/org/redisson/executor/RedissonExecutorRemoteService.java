@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,23 @@
 package org.redisson.executor;
 
 import org.redisson.RedissonExecutorService;
+import org.redisson.RedissonObject;
 import org.redisson.RedissonRemoteService;
+import org.redisson.RedissonShutdownException;
 import org.redisson.api.RFuture;
 import org.redisson.api.RMap;
 import org.redisson.api.executor.*;
 import org.redisson.client.codec.Codec;
 import org.redisson.client.protocol.RedisCommands;
-import org.redisson.command.CommandAsyncService;
-import org.redisson.misc.RPromise;
+import org.redisson.command.CommandAsyncExecutor;
 import org.redisson.remote.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -38,6 +42,8 @@ import java.util.stream.Collectors;
  *
  */
 public class RedissonExecutorRemoteService extends RedissonRemoteService {
+
+    private static final Logger log = LoggerFactory.getLogger(RedissonExecutorRemoteService.class);
 
     private String tasksExpirationTimeName;
     private String tasksCounterName;
@@ -52,19 +58,19 @@ public class RedissonExecutorRemoteService extends RedissonRemoteService {
     private List<TaskSuccessListener> successListeners;
 
     public RedissonExecutorRemoteService(Codec codec, String name,
-            CommandAsyncService commandExecutor, String executorId, ConcurrentMap<String, ResponseEntry> responses) {
-        super(codec, name, commandExecutor, executorId, responses);
+                                         CommandAsyncExecutor commandExecutor, String executorId) {
+        super(codec, name, commandExecutor, executorId);
     }
 
     @Override
     protected RFuture<RemoteServiceRequest> getTask(String requestId, RMap<String, RemoteServiceRequest> tasks) {
-        return commandExecutor.evalWriteAsync(tasks.getName(), codec, RedisCommands.EVAL_OBJECT,
+        return commandExecutor.evalWriteNoRetryAsync(((RedissonObject) tasks).getRawName(), codec, RedisCommands.EVAL_OBJECT,
                   "local value = redis.call('zscore', KEYS[2], ARGV[1]); " +
                   "if (value ~= false and tonumber(value) < tonumber(ARGV[2])) then "
                     + "redis.call('zrem', KEYS[2], ARGV[1]); "
 
                     + "redis.call('zrem', KEYS[7], ARGV[1]); "
-                    + "redis.call('zrem', KEYS[7], 'ff' .. ARGV[1]);"
+                    + "redis.call('zrem', KEYS[7], 'ff:' .. ARGV[1]);"
 
                     + "redis.call('hdel', KEYS[1], ARGV[1]); "
                     + "if redis.call('decr', KEYS[3]) == 0 then "
@@ -79,35 +85,57 @@ public class RedissonExecutorRemoteService extends RedissonRemoteService {
                     + "return nil;"
                 + "end;"
                 + "return redis.call('hget', KEYS[1], ARGV[1]); ",
-        Arrays.asList(tasks.getName(), tasksExpirationTimeName, tasksCounterName, statusName,
+        Arrays.asList(((RedissonObject) tasks).getRawName(), tasksExpirationTimeName, tasksCounterName, statusName,
                             tasksRetryIntervalName, terminationTopicName, schedulerQueueName),
         requestId, System.currentTimeMillis(), RedissonExecutorService.SHUTDOWN_STATE, RedissonExecutorService.TERMINATED_STATE);
     }
 
     @Override
     protected <T> void invokeMethod(RemoteServiceRequest request, RemoteServiceMethod method,
-                RFuture<RemoteServiceCancelRequest> cancelRequestFuture, RPromise<RRemoteServiceResponse> responsePromise) {
-        startedListeners.stream().forEach(l -> l.onStarted(request.getId()));
+                                    CompletableFuture<RemoteServiceCancelRequest> cancelRequestFuture,
+                                    CompletableFuture<RRemoteServiceResponse> responsePromise) {
+        startedListeners.forEach(l -> l.onStarted(request.getId()));
 
         if (taskTimeout > 0) {
-            commandExecutor.getConnectionManager().getGroup().schedule(() -> {
-                ((RPromise) cancelRequestFuture).trySuccess(new RemoteServiceCancelRequest(true, false));
+            commandExecutor.getServiceManager().newTimeout(t -> {
+                cancelRequestFuture.complete(new RemoteServiceCancelRequest(true, false));
             }, taskTimeout, TimeUnit.MILLISECONDS);
         }
-        super.invokeMethod(request, method, cancelRequestFuture, responsePromise);
 
-        if (responsePromise.getNow() instanceof RemoteServiceResponse) {
-            RemoteServiceResponse response = (RemoteServiceResponse) responsePromise.getNow();
-            if (response.getError() == null) {
-                successListeners.stream().forEach(l -> l.onSucceeded(request.getId(), response.getResult()));
-            } else {
-                failureListeners.stream().forEach(l -> l.onFailed(request.getId(), response.getError()));
+        try {
+            Object result = method.getMethod().invoke(method.getBean(), request.getArgs());
+
+            RemoteServiceResponse response = new RemoteServiceResponse(request.getId(), result);
+            responsePromise.complete(response);
+        } catch (Exception e) {
+            if (e instanceof InvocationTargetException
+                && e.getCause() instanceof RedissonShutdownException) {
+                if (cancelRequestFuture != null) {
+                    cancelRequestFuture.cancel(false);
+                }
+                return;
             }
-        } else {
-            failureListeners.stream().forEach(l -> l.onFailed(request.getId(), null));
+            RemoteServiceResponse response = new RemoteServiceResponse(request.getId(), e.getCause());
+            responsePromise.complete(response);
+            log.error("Can't execute: {}", request, e);
         }
 
-        finishedListeners.stream().forEach(l -> l.onFinished(request.getId()));
+        if (cancelRequestFuture != null) {
+            cancelRequestFuture.cancel(false);
+        }
+
+        if (commandExecutor.getNow(responsePromise) instanceof RemoteServiceResponse) {
+            RemoteServiceResponse response = (RemoteServiceResponse) commandExecutor.getNow(responsePromise);
+            if (response.getError() == null) {
+                successListeners.forEach(l -> l.onSucceeded(request.getId(), response.getResult()));
+            } else {
+                failureListeners.forEach(l -> l.onFailed(request.getId(), response.getError()));
+            }
+        } else {
+            failureListeners.forEach(l -> l.onFailed(request.getId(), null));
+        }
+
+        finishedListeners.forEach(l -> l.onFinished(request.getId()));
     }
 
     public void setListeners(List<TaskListener> listeners) {

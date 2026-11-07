@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package org.redisson.connection;
 import org.redisson.client.RedisClient;
 import org.redisson.misc.RedisURI;
 
+import java.util.Objects;
+
 /**
  * 
  * @author Nikita Koksharov
@@ -25,7 +27,7 @@ import org.redisson.misc.RedisURI;
  */
 public class NodeSource {
 
-    public enum Redirect {MOVED, ASK}
+    public enum Redirect {MOVED, ASK, REDIRECT}
 
     private Integer slot;
     private RedisURI addr;
@@ -33,12 +35,19 @@ public class NodeSource {
     private Redirect redirect;
     private MasterSlaveEntry entry;
 
+    public NodeSource(NodeSource nodeSource, RedisClient redisClient) {
+        this.slot = nodeSource.slot;
+        this.addr = nodeSource.addr;
+        this.redisClient = redisClient;
+        this.redirect = nodeSource.getRedirect();
+        this.entry = nodeSource.getEntry();
+    }
+
     public NodeSource(MasterSlaveEntry entry) {
         this.entry = entry;
     }
 
-    public NodeSource(MasterSlaveEntry entry, Integer slot) {
-        this.entry = entry;
+    public NodeSource(Integer slot) {
         this.slot = slot;
     }
 
@@ -77,7 +86,7 @@ public class NodeSource {
     public RedisClient getRedisClient() {
         return redisClient;
     }
-    
+
     public RedisURI getAddr() {
         return addr;
     }
@@ -88,6 +97,16 @@ public class NodeSource {
                 + ", entry=" + entry + "]";
     }
 
-    
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        NodeSource that = (NodeSource) o;
+        return Objects.equals(slot, that.slot) && Objects.equals(addr, that.addr) && Objects.equals(redisClient, that.redisClient) && redirect == that.redirect && Objects.equals(entry, that.entry);
+    }
 
+    @Override
+    public int hashCode() {
+        return Objects.hash(slot, addr, redisClient, redirect, entry);
+    }
 }

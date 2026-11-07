@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import org.redisson.api.mapreduce.RMapReduce;
  * @param <K> map key
  * @param <V> value
  */
-public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K, V> {
+public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K, V>, RDestroyable {
 
     /**
      * Loads all map entries to this Redis map using {@link org.redisson.api.map.MapLoader}.
@@ -81,7 +81,7 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
     V put(K key, V value);
     
     /**
-     * Stores the specified <code>value</code> mapped by specified <code>key</code>
+     * Stores the specified <code>value</code> mapped by <code>key</code>
      * only if there is no value with specified<code>key</code> stored before.
      * <p>
      * If {@link MapWriter} is defined then new map entry is stored in write-through mode.
@@ -93,7 +93,36 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      */
     @Override
     V putIfAbsent(K key, V value);
-    
+
+    /**
+     * Stores the specified <code>value</code> mapped by <code>key</code>
+     * only if mapping already exists.
+     * <p>
+     * If {@link MapWriter} is defined then new map entry is stored in write-through mode.
+     *
+     * @param key - map key
+     * @param value - map value
+     * @return <code>null</code> if key doesn't exist in the hash and value hasn't been set.
+     *         Previous value if key already exists in the hash and new value has been stored.
+     */
+    V putIfExists(K key, V value);
+
+    /**
+     * Returns random keys from this map limited by <code>count</code>
+     *
+     * @param count - keys amount to return
+     * @return random keys
+     */
+    Set<K> randomKeys(int count);
+
+    /**
+     * Returns random map entries from this map limited by <code>count</code>
+     *
+     * @param count - entries amount to return
+     * @return random entries
+     */
+    Map<K, V> randomEntries(int count);
+
     /**
      * Returns <code>RMapReduce</code> object associated with this map
      * 
@@ -162,8 +191,18 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
     /**
      * Adds the given <code>delta</code> to the current value
      * by mapped <code>key</code>.
-     *
-     * Works only for <b>numeric</b> values!
+     * <p>
+     * Works only with codecs below
+     * <p>
+     * {@link org.redisson.codec.JsonJacksonCodec},
+     * <p>
+     * {@link org.redisson.client.codec.StringCodec},
+     * <p>
+     * {@link org.redisson.client.codec.IntegerCodec},
+     * <p>
+     * {@link org.redisson.client.codec.DoubleCodec}
+     * <p>
+     * {@link org.redisson.client.codec.LongCodec}
      *
      * @param key - map key
      * @param delta the value to add
@@ -274,7 +313,7 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * <p>
      * The returned map is <b>NOT</b> backed by the original map.
      *
-     * @param keys - map keys
+     * @param keys map keys
      * @return Map slice
      */
     Map<K, V> getAll(Set<K> keys);
@@ -348,6 +387,25 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
     boolean fastPutIfAbsent(K key, V value);
 
     /**
+     * Stores the specified <code>value</code> mapped by <code>key</code>
+     * only if mapping already exists.
+     * <p>
+     * Returns <code>true</code> if key is a new one in the hash and value was set or
+     * <code>false</code> if key already exists in the hash and change hasn't been made.
+     * <p>
+     * Works faster than <code>{@link #putIfExists(Object, Object)}</code> but doesn't return
+     * previous value associated with <code>key</code>
+     * <p>
+     * If {@link MapWriter} is defined then new map entry is stored in write-through mode.
+     *
+     * @param key - map key
+     * @param value - map value
+     * @return <code>true</code> if key already exists in the hash and new value has been stored.
+     *         <code>false</code> if key doesn't exist in the hash and value hasn't been set.
+     */
+    boolean fastPutIfExists(K key, V value);
+
+    /**
      * Read all keys at once
      *
      * @return keys
@@ -401,7 +459,10 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * Returns key set of this map.
      * If <code>pattern</code> is not null then only keys match this pattern are loaded.
      * Keys are loaded in batch. Batch size is defined by <code>count</code> param.
-     * 
+     * <p>
+     * Use <code>org.redisson.client.codec.StringCodec</code> for Map keys.
+     * <p>
+     *
      *  Supported glob-style patterns:
      *  <p>
      *    h?llo subscribes to hello, hallo and hxllo
@@ -421,7 +482,10 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
     /**
      * Returns key set of this map. 
      * If <code>pattern</code> is not null then only keys match this pattern are loaded.
-     * 
+     * <p>
+     * Use <code>org.redisson.client.codec.StringCodec</code> for Map keys.
+     * <p>
+     *
      *  Supported glob-style patterns:
      *  <p>
      *    h?llo subscribes to hello, hallo and hxllo
@@ -452,15 +516,24 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * Returns values collection of this map.
      * Values are loaded in batch. Batch size is <code>10</code>. 
      * If <code>keyPattern</code> is not null then only values mapped by matched keys of this pattern are loaded.
-     * 
+     * <p>
+     * Use <code>org.redisson.client.codec.StringCodec</code> for Map keys.
+     * <p>
+     * Usage example:
+     * <pre>
+     *     Codec valueCodec = ...
+     *     RMap<String, MyObject> map = redissonClient.getMap("simpleMap", new CompositeCodec(StringCodec.INSTANCE, valueCodec, valueCodec));
+     *
+     *     // or
+     *
+     *     RMap<String, String> map = redissonClient.getMap("simpleMap", StringCodec.INSTANCE);
+     * </pre>
+     * <pre>
      *  Supported glob-style patterns:
-     *  <p>
      *    h?llo subscribes to hello, hallo and hxllo
-     *    <p>
      *    h*llo subscribes to hllo and heeeello
-     *    <p>
      *    h[ae]llo subscribes to hello and hallo, but not hillo
-     * 
+     * </pre>
      * @see #readAllValues()
      * 
      * @param keyPattern - key pattern
@@ -472,15 +545,24 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * Returns values collection of this map.
      * Values are loaded in batch. Batch size is defined by <code>count</code> param.
      * If <code>keyPattern</code> is not null then only values mapped by matched keys of this pattern are loaded.
-     * 
+     * <p>
+     * Use <code>org.redisson.client.codec.StringCodec</code> for Map keys.
+     * <p>
+     * Usage example:
+     * <pre>
+     *     Codec valueCodec = ...
+     *     RMap<String, MyObject> map = redissonClient.getMap("simpleMap", new CompositeCodec(StringCodec.INSTANCE, valueCodec, valueCodec));
+     *
+     *     // or
+     *
+     *     RMap<String, String> map = redissonClient.getMap("simpleMap", StringCodec.INSTANCE);
+     * </pre>
+     * <pre>
      *  Supported glob-style patterns:
-     *  <p>
      *    h?llo subscribes to hello, hallo and hxllo
-     *    <p>
      *    h*llo subscribes to hllo and heeeello
-     *    <p>
      *    h[ae]llo subscribes to hello and hallo, but not hillo
-     * 
+     * </pre>
      * @see #readAllValues()
      * 
      * @param keyPattern - key pattern
@@ -515,18 +597,27 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * Returns map entries collection.
      * Map entries are loaded in batch. Batch size is <code>10</code>. 
      * If <code>keyPattern</code> is not null then only entries mapped by matched keys of this pattern are loaded.
-     * 
+     * <p>
+     * Use <code>org.redisson.client.codec.StringCodec</code> for Map keys.
+     * <p>
+     * Usage example:
+     * <pre>
+     *     Codec valueCodec = ...
+     *     RMap<String, MyObject> map = redissonClient.getMap("simpleMap", new CompositeCodec(StringCodec.INSTANCE, valueCodec, valueCodec));
+     *
+     *     // or
+     *
+     *     RMap<String, String> map = redissonClient.getMap("simpleMap", StringCodec.INSTANCE);
+     * </pre>
+     * <pre>
      *  Supported glob-style patterns:
-     *  <p>
      *    h?llo subscribes to hello, hallo and hxllo
-     *    <p>
      *    h*llo subscribes to hllo and heeeello
-     *    <p>
      *    h[ae]llo subscribes to hello and hallo, but not hillo
-     * 
+     * </pre>
      * @see #readAllEntrySet()
      * 
-     * @param keyPattern - key pattern
+     * @param keyPattern key pattern
      * @return map entries collection
      */
     Set<java.util.Map.Entry<K, V>> entrySet(String keyPattern);
@@ -535,19 +626,28 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * Returns map entries collection.
      * Map entries are loaded in batch. Batch size is defined by <code>count</code> param. 
      * If <code>keyPattern</code> is not null then only entries mapped by matched keys of this pattern are loaded.
-     * 
+     * <p>
+     * Use <code>org.redisson.client.codec.StringCodec</code> for Map keys.
+     * <p>
+     * Usage example:
+     * <pre>
+     *     Codec valueCodec = ...
+     *     RMap<String, MyObject> map = redissonClient.getMap("simpleMap", new CompositeCodec(StringCodec.INSTANCE, valueCodec, valueCodec));
+     *
+     *     // or
+     *
+     *     RMap<String, String> map = redissonClient.getMap("simpleMap", StringCodec.INSTANCE);
+     * </pre>
+     * <pre>
      *  Supported glob-style patterns:
-     *  <p>
      *    h?llo subscribes to hello, hallo and hxllo
-     *    <p>
      *    h*llo subscribes to hllo and heeeello
-     *    <p>
      *    h[ae]llo subscribes to hello and hallo, but not hillo
-     * 
+     * </pre>
      * @see #readAllEntrySet()
      * 
-     * @param keyPattern - key pattern
-     * @param count - size of entries batch
+     * @param keyPattern key pattern
+     * @param count size of entries batch
      * @return map entries collection
      */
     Set<java.util.Map.Entry<K, V>> entrySet(String keyPattern, int count);
@@ -562,5 +662,19 @@ public interface RMap<K, V> extends ConcurrentMap<K, V>, RExpirable, RMapAsync<K
      * @return map entries collection
      */
     Set<java.util.Map.Entry<K, V>> entrySet(int count);
-    
+
+    /**
+     * Adds object event listener
+     *
+     * @see org.redisson.api.listener.TrackingListener
+     * @see org.redisson.api.listener.MapPutListener
+     * @see org.redisson.api.listener.MapRemoveListener
+     * @see org.redisson.api.ExpiredObjectListener
+     * @see org.redisson.api.DeletedObjectListener
+     *
+     * @param listener object event listener
+     * @return listener id
+     */
+    int addListener(ObjectListener listener);
+
 }

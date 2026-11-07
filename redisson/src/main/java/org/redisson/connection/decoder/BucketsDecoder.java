@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,12 @@
  */
 package org.redisson.connection.decoder;
 
-import java.util.Collections;
+import org.redisson.client.handler.State;
+import org.redisson.client.protocol.decoder.MultiDecoder;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import org.redisson.client.handler.State;
-import org.redisson.client.protocol.Decoder;
-import org.redisson.client.protocol.decoder.MultiDecoder;
 
 /**
  * 
@@ -31,24 +29,19 @@ import org.redisson.client.protocol.decoder.MultiDecoder;
  */
 public class BucketsDecoder implements MultiDecoder<Map<Object, Object>> {
 
-    private final String key;
+    private final List<Object> keys;
     
-    public BucketsDecoder(String key) {
-        this.key = key;
-    }
-
-    @Override
-    public Decoder<Object> getDecoder(int paramNum, State state) {
-        return null;
+    public BucketsDecoder(List<Object> keys) {
+        this.keys = keys;
     }
 
     @Override
     public Map<Object, Object> decode(List<Object> parts, State state) {
-        if (parts.isEmpty()) {
-            return new HashMap<Object, Object>();
+        Map<Object, Object> result = new HashMap<>();
+        for (int i = 0; i < parts.size(); i++) {
+            result.put(keys.get(i), parts.get(i));
         }
-
-        return Collections.singletonMap(key, parts.get(0));
+        return result;
     }
 
 }

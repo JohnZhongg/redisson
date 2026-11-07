@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import org.redisson.api.RFuture;
 import org.redisson.api.redisnode.BaseRedisNodes;
 import org.redisson.client.RedisConnection;
 import org.redisson.client.protocol.RedisCommands;
+import org.redisson.command.CommandAsyncExecutor;
 import org.redisson.connection.ClientConnectionsEntry;
 import org.redisson.connection.ConnectionManager;
 import org.redisson.connection.MasterSlaveEntry;
@@ -28,9 +29,8 @@ import org.redisson.misc.RedisURI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -41,25 +41,27 @@ import java.util.concurrent.TimeUnit;
 public class RedissonBaseNodes implements BaseRedisNodes {
 
     ConnectionManager connectionManager;
+    CommandAsyncExecutor commandExecutor;
 
-    public RedissonBaseNodes(ConnectionManager connectionManager) {
+    public RedissonBaseNodes(ConnectionManager connectionManager, CommandAsyncExecutor commandExecutor) {
         this.connectionManager = connectionManager;
+        this.commandExecutor = commandExecutor;
     }
 
     protected <T extends org.redisson.api.redisnode.RedisNode> Collection<T> getNodes(NodeType type) {
         Collection<MasterSlaveEntry> entries = connectionManager.getEntrySet();
         List<T> result = new ArrayList<>();
         for (MasterSlaveEntry masterSlaveEntry : entries) {
-            if (masterSlaveEntry.getAllEntries().isEmpty()
-                    && type == NodeType.MASTER) {
-                RedisNode entry = new RedisNode(masterSlaveEntry.getClient(), connectionManager.getCommandExecutor(), NodeType.MASTER);
+            if (type == NodeType.MASTER) {
+                RedisNode entry = new RedisNode(masterSlaveEntry.getClient(), commandExecutor, NodeType.MASTER);
                 result.add((T) entry);
+                continue;
             }
 
             for (ClientConnectionsEntry slaveEntry : masterSlaveEntry.getAllEntries()) {
                 if (slaveEntry.getFreezeReason() != ClientConnectionsEntry.FreezeReason.MANAGER
                         && slaveEntry.getNodeType() == type) {
-                    RedisNode entry = new RedisNode(slaveEntry.getClient(), connectionManager.getCommandExecutor(), slaveEntry.getNodeType());
+                    RedisNode entry = new RedisNode(slaveEntry.getClient(), commandExecutor, slaveEntry.getNodeType());
                     result.add((T) entry);
                 }
             }
@@ -72,15 +74,14 @@ public class RedissonBaseNodes implements BaseRedisNodes {
         RedisURI addr = new RedisURI(address);
         for (MasterSlaveEntry masterSlaveEntry : entries) {
             if (nodeType == NodeType.MASTER
-                    && masterSlaveEntry.getAllEntries().isEmpty()
-                        && RedisURI.compare(masterSlaveEntry.getClient().getAddr(), addr)) {
-                return new RedisNode(masterSlaveEntry.getClient(), connectionManager.getCommandExecutor(), NodeType.MASTER);
+                    && addr.equals(masterSlaveEntry.getClient().getAddr())) {
+                return new RedisNode(masterSlaveEntry.getClient(), commandExecutor, NodeType.MASTER);
             }
 
             for (ClientConnectionsEntry entry : masterSlaveEntry.getAllEntries()) {
-                if (RedisURI.compare(entry.getClient().getAddr(), addr)
+                if (addr.equals(entry.getClient().getAddr())
                         && entry.getFreezeReason() != ClientConnectionsEntry.FreezeReason.MANAGER) {
-                    return new RedisNode(entry.getClient(), connectionManager.getCommandExecutor(), entry.getNodeType());
+                    return new RedisNode(entry.getClient(), commandExecutor, entry.getNodeType());
                 }
             }
         }
@@ -92,13 +93,13 @@ public class RedissonBaseNodes implements BaseRedisNodes {
         List<RedisNode> result = new ArrayList<>();
         for (MasterSlaveEntry masterSlaveEntry : entries) {
             if (masterSlaveEntry.getAllEntries().isEmpty()) {
-                RedisNode masterEntry = new RedisNode(masterSlaveEntry.getClient(), connectionManager.getCommandExecutor(), NodeType.MASTER);
+                RedisNode masterEntry = new RedisNode(masterSlaveEntry.getClient(), commandExecutor, NodeType.MASTER);
                 result.add(masterEntry);
             }
 
             for (ClientConnectionsEntry slaveEntry : masterSlaveEntry.getAllEntries()) {
                 if (slaveEntry.getFreezeReason() != ClientConnectionsEntry.FreezeReason.MANAGER) {
-                    RedisNode entry = new RedisNode(slaveEntry.getClient(), connectionManager.getCommandExecutor(), slaveEntry.getNodeType());
+                    RedisNode entry = new RedisNode(slaveEntry.getClient(), commandExecutor, slaveEntry.getNodeType());
                     result.add(entry);
                 }
             }
@@ -109,48 +110,31 @@ public class RedissonBaseNodes implements BaseRedisNodes {
     @Override
     public boolean pingAll(long timeout, TimeUnit timeUnit) {
         List<RedisNode> clients = getNodes();
-        Map<RedisConnection, RFuture<String>> result = new ConcurrentHashMap<>(clients.size());
-        CountDownLatch latch = new CountDownLatch(clients.size());
+        List<CompletableFuture<Boolean>> futures = new ArrayList<>();
         for (RedisNode entry : clients) {
-            RFuture<RedisConnection> f = entry.getClient().connectAsync();
-            f.onComplete((c, e) -> {
-                if (c != null) {
-                    RFuture<String> r = c.async(timeUnit.toMillis(timeout), RedisCommands.PING);
-                    result.put(c, r);
-                    latch.countDown();
-                } else {
-                    latch.countDown();
-                }
-            });
+            CompletionStage<RedisConnection> f = entry.getClient().connectAsync();
+            CompletionStage<Boolean> ff = f.thenCompose(c -> {
+                RFuture<String> r = c.async(timeUnit.toMillis(timeout), RedisCommands.PING);
+                return r.whenComplete((rr, ex) -> {
+                    c.closeAsync();
+                });
+            }).thenApply("PONG"::equals);
+            futures.add(ff.toCompletableFuture());
         }
 
-        long time = System.currentTimeMillis();
+        CompletableFuture<Void> f = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
         try {
-            latch.await();
+            f.get(timeout, timeUnit);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        }
-
-        if (System.currentTimeMillis() - time >= connectionManager.getConfig().getConnectTimeout()) {
-            for (Map.Entry<RedisConnection, RFuture<String>> entry : result.entrySet()) {
-                entry.getKey().closeAsync();
-            }
+        } catch (Exception e) {
             return false;
         }
 
-        time = System.currentTimeMillis();
-        boolean res = true;
-        for (Map.Entry<RedisConnection, RFuture<String>> entry : result.entrySet()) {
-            RFuture<String> f = entry.getValue();
-            f.awaitUninterruptibly();
-            if (!"PONG".equals(f.getNow())) {
-                res = false;
-            }
-            entry.getKey().closeAsync();
-        }
-
-        // true and no futures were missed during client connection
-        return res && result.size() == clients.size();
+        return futures.stream()
+                        .map(r -> r.getNow(false))
+                        .filter(r -> !r).findAny()
+                        .orElse(true);
     }
 
     @Override

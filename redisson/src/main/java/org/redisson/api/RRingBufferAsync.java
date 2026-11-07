@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 package org.redisson.api;
 
+import java.util.List;
+
 /**
  * RingBuffer based queue evicts elements from the head if queue capacity became full.
  * <p>
@@ -29,14 +31,22 @@ package org.redisson.api;
 public interface RRingBufferAsync<V> extends RQueueAsync<V> {
 
     /**
-     * Sets queue capacity only if it is not set before.
+     * Sets capacity of the queue only if it wasn't set before.
      *
      * @param capacity - queue capacity
      * @return <code>true</code> if capacity set successfully
      *         <code>false</code> if capacity already set
      */
     RFuture<Boolean> trySetCapacityAsync(int capacity);
-    
+
+    /**
+     * Sets capacity of the queue and overrides current value.
+     * Trims queue if previous capacity value was greater than new.
+     *
+     * @param capacity - queue capacity
+     */
+    RFuture<Void> setCapacityAsync(int capacity);
+
     /**
      * Returns remaining capacity of this queue
      * 
@@ -50,5 +60,39 @@ public interface RRingBufferAsync<V> extends RQueueAsync<V> {
      * @return queue capacity
      */
     RFuture<Integer> capacityAsync();
+
+    /**
+     * Returns the newest (most recently added) elements of this buffer.
+     * At most <code>count</code> elements are returned, ordered from oldest
+     * to newest (same order as {@link #readAllAsync()}). Doesn't remove elements.
+     * <p>
+     * If <code>count</code> is greater than the current size, all elements are returned.
+     *
+     * @param count - maximum number of elements to return
+     * @return list of the newest elements, or an empty list if this buffer is
+     *         empty or <code>count</code> is non-positive
+     */
+    RFuture<List<V>> readNewestAsync(int count);
+
+    /**
+     * Returns the oldest elements of this buffer.
+     * At most <code>count</code> elements are returned, ordered from oldest
+     * to newest (same order as {@link #readAllAsync()}). Doesn't remove elements.
+     * <p>
+     * If <code>count</code> is greater than the current size, all elements are returned.
+     *
+     * @param count - maximum number of elements to return
+     * @return list of the oldest elements, or an empty list if this buffer is
+     *         empty or <code>count</code> is non-positive
+     */
+    RFuture<List<V>> readOldestAsync(int count);
+
+    /**
+     * Retrieves, but doesn't remove, the newest (most recently added) element of this buffer,
+     * or returns <code>null</code> if this buffer is empty.
+     *
+     * @return the newest element, or <code>null</code> if this buffer is empty
+     */
+    RFuture<V> peekLastAsync();
     
 }

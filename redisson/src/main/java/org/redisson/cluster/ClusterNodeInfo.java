@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package org.redisson.cluster;
 
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Set;
@@ -28,7 +29,20 @@ import org.redisson.misc.RedisURI;
  */
 public class ClusterNodeInfo {
 
-    public enum Flag {NOFLAGS, SLAVE, MASTER, MYSELF, FAIL, HANDSHAKE, NOADDR};
+    public enum Flag {
+        NOFLAGS("noflags"), SLAVE("slave"), MASTER("master"), MYSELF("myself"),
+        FAIL("fail"), EVENTUAL_FAIL("fail?"), HANDSHAKE("handshake"), NOADDR("noaddr");
+
+        private final String value;
+
+        Flag(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
+    };
 
     private final String nodeInfo;
     
@@ -36,8 +50,9 @@ public class ClusterNodeInfo {
     private RedisURI address;
     private final Set<Flag> flags = EnumSet.noneOf(Flag.class);
     private String slaveOf;
+    private String hostName;
 
-    private final Set<ClusterSlotRange> slotRanges = new HashSet<ClusterSlotRange>();
+    private final Set<ClusterSlotRange> slotRanges = new HashSet<>();
 
     public ClusterNodeInfo(String nodeInfo) {
         this.nodeInfo = nodeInfo;
@@ -61,7 +76,7 @@ public class ClusterNodeInfo {
         slotRanges.add(range);
     }
     public Set<ClusterSlotRange> getSlotRanges() {
-        return slotRanges;
+        return Collections.unmodifiableSet(slotRanges);
     }
 
     public boolean containsFlag(Flag flag) {
@@ -78,6 +93,14 @@ public class ClusterNodeInfo {
         this.slaveOf = slaveOf;
     }
 
+    public String getHostName() {
+        return hostName;
+    }
+
+    public void setHostName(String hostName) {
+        this.hostName = hostName;
+    }
+
     public String getNodeInfo() {
         return nodeInfo;
     }
@@ -85,7 +108,7 @@ public class ClusterNodeInfo {
     @Override
     public String toString() {
         return "ClusterNodeInfo [nodeId=" + nodeId + ", address=" + address + ", flags=" + flags
-                + ", slaveOf=" + slaveOf + ", slotRanges=" + slotRanges + "]";
+                + ", slaveOf=" + slaveOf + ", hostName=" + hostName + ", slotRanges=" + slotRanges + "]";
     }
 
 }

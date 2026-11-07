@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,10 @@
  */
 package org.redisson.api;
 
-import java.util.List;
-
-import reactor.core.publisher.Flux;
+import org.redisson.api.queue.QueueMoveElementsArgs;
 import reactor.core.publisher.Mono;
+
+import java.util.List;
 
 /**
  * Reactive interface for Queue object
@@ -49,7 +49,7 @@ public interface RQueueReactive<V> extends RCollectionReactive<V> {
      *
      * @return list of head elements
      */
-    Flux<V> poll(int limit);
+    Mono<List<V>> poll(int limit);
 
     /**
      * Inserts the specified element into this queue.
@@ -77,5 +77,40 @@ public interface RQueueReactive<V> extends RCollectionReactive<V> {
      * @return elements
      */
     Mono<List<V>> readAll();
+
+    /**
+     * Retrieves and removes the head elements of this queue
+     * and adds them at the tail of <code>queueName</code>.
+     * Returns moved elements.
+     * <p>
+     * Requires <b>Redis 8.10.0 and higher.</b>
+     *
+     * @param args - arguments object
+     * @return moved elements
+     */
+    Mono<List<V>> move(QueueMoveElementsArgs args);
+
+    /**
+     * Adds object event listener
+     *
+     * @see org.redisson.api.listener.TrackingListener
+     * @see org.redisson.api.ExpiredObjectListener
+     * @see org.redisson.api.DeletedObjectListener
+     * @see org.redisson.api.listener.ListAddListener
+     * @see org.redisson.api.listener.ListRemoveListener
+     *
+     * @param listener - object event listener
+     * @return listener id
+     */
+    Mono<Integer> addListener(ObjectListener listener);
+
+    /**
+     * Returns index of <code>element</code> or
+     * -1 if element isn't found
+     *
+     * @param element to find
+     * @return index of -1 if element isn't found
+     */
+    Mono<Integer> indexOf(V element);
 
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-2020 Nikita Koksharov
+ * Copyright (c) 2013-2026 Nikita Koksharov
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package org.redisson.rx;
 
-import io.reactivex.Single;
+import io.reactivex.rxjava3.core.Single;
 import org.redisson.RedissonBinaryStream;
 import org.redisson.api.RBinaryStream;
 import org.redisson.api.RFuture;
@@ -46,11 +46,11 @@ public class RedissonBinaryStreamRx {
     }
 
     public Single<Integer> read(ByteBuffer buf) {
-        return commandExecutor.flowable(() -> (RFuture<Integer>) channel.read(buf)).singleOrError();
+        return commandExecutor.flowable(() -> ((RFuture<Integer>) channel.read(buf))).singleOrError();
     }
 
     public Single<Integer> write(ByteBuffer buf) {
-        return commandExecutor.flowable(() -> (RFuture<Integer>) channel.write(buf)).singleOrError();
+        return commandExecutor.flowable(() -> ((RFuture<Integer>) channel.write(buf))).singleOrError();
     }
 
 }
